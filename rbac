@@ -1,0 +1,125 @@
+https://docs.aws.amazon.com/eks/latest/userguide/access-policies.html
+
+https://aws.amazon.com/blogs/security/how-to-use-trust-policies-with-iam-roles/
+
+https://antonputra.com/kubernetes/add-iam-user-and-iam-role-to-eks/#add-iam-user-to-eks-cluster
+
+https://rad.security/blog/what-is-kubernetes-rbac#authenticate-kubernetes
+
+##############################################################
+1st do the AD integration with the server see in saperate project
+
+Then we need a common user so create the jenkins user
+Then provide the no password entry in the sudoers file
+Then create the .kube folder in the /home/jenkins and then copy the cluster config file here
+Then install kubectl >>> follow following steps as by default error will come as we are running commands with jenkins user
+   curl -LO "https://dl.k8s.io/release/$(curl -L -s https://dl.k8s.io/release/stable.txt)/bin/linux/amd64/kubectl"
+   chmod +x kubectl
+   mkdir -p ~/.local/bin
+   mv ./kubectl ~/.local/bin/kubectl
+
+Still we wont be able to access the cluster as we need aws cli, so install like following:
+curl "https://awscli.amazonaws.com/awscli-exe-linux-x86_64.zip" -o "awscliv2.zip"
+unzip awscliv2.zip
+sudo ./aws/install --install-dir /home/jenkins/bin
+echo 'export PATH=/home/jenkins/bin:$PATH' >> /home/jenkins/.bashrc
+source /home/jenkins/.bashrc
+aws --version
+export KUBECONFIG="$HOME/.kube/dev-eks-v129.conf"
+kubectl get nodes
+aws sts get-caller-identity
+Now  we will get the caller identity and the nodes as well.
+
+After this create 1 user in the aws account where the cluster is present exa: gtuser
+Then attach following policy with minimalistc permission"
+{
+    "Version": "2012-10-17",
+    "Statement": [
+        {
+            "Effect": "Allow",
+            "Action": [
+                "eks:*"
+            ],
+            "Resource": "*"
+        },
+        {
+            "Effect": "Allow",
+            "Action": "iam:PassRole",
+            "Resource": "*",
+            "Condition": {
+                "StringEquals": {
+                    "iam:PassedToService": "eks.amazonaws.com"
+                }
+            }
+        }
+    ]
+}
+
+Then create the access key and secret key for the user 
+Then run the aws configure command and provide the credentials,
+Now run following command: 
+aws sts get-caller-identity > It will give the gtuser identity
+
+Then create the rbac.yaml >
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRole
+metadata:
+  name: k8s-read
+rules:
+- apiGroups:
+  - '*'
+  resources:
+  - deployments
+  - pods
+  - pods/log
+  - configmaps
+  - secrets
+  - services
+  - virtualservices
+  - horizontalpodautoscalers
+  - gateways
+  - namespaces
+  verbs:
+  - get
+  - list
+  - watch
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRoleBinding
+metadata:
+  name: k8s-read
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: ClusterRole
+  name: k8s-read
+subjects:
+- apiGroup: rbac.authorization.k8s.io
+  kind: Group
+  name: k8s-read
+
+Here we have provided the group name as k8s-read.
+Then run following command to map the gtuser in the configmap:
+eksctl create iamidentitymapping     --cluster uat-eks-v128     --region ap-south-1     --arn arn:aws:iam::731760562474:user/gtuser     --group system:masters     --no-duplicate-arns     --username gtuser
+
+Then edit cm : kubectl edit -n kube-system configmap/aws-auth
+
+Then edit in following way,
+mapUsers: |
+    - groups:
+      - k8s-read
+      userarn: arn:aws:iam::731760562474:user/gtuser
+      username: gtuser
+
+Added k8s-read in place of system-masters
+
+After this run following command:
+kubectl auth can-i delete namespace > It should answer no.
+
+
+
+
+
+
+
+
